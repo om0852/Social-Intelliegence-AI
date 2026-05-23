@@ -49,3 +49,7 @@ test-results/
 
 # Logs
 *.log
+
+# Tor Proxy Pool
+tor_proxy_pool/tor_bundle/
+tor_proxy_pool/tor_data/
