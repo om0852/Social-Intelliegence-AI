@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+requests[socks]
+aiohttp
+aiohttp-socks
+beautifulsoup4

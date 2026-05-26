@@ -16,7 +16,11 @@ class SocialProfile(BaseModel):
     platform: str
     username: Optional[str] = None
     followers: Optional[int] = 0
+    following: Optional[int] = 0
     bio: Optional[str] = None
+    age: Optional[int] = 0
+    gender: Optional[str] = "Unknown"
+    location: Optional[str] = "Unknown"
 
 class Location(BaseModel):
     city: Optional[str] = None
@@ -67,13 +71,14 @@ class AuthorDemographics(BaseModel):
     estimated_experience: Optional[str] = "Unknown"
 
 class FinalIntelligence(BaseModel):
-    title: str
-    description: str
+    title: Optional[str] = None
+    description: Optional[str] = None
     author_name: Optional[str] = None
     author_username: Optional[str] = None
     author_demographics: Optional[AuthorDemographics] = None
     platform: Optional[str] = None
     followers: Optional[int] = 0
+    following: Optional[int] = 0
     age: Optional[int] = 0
     company_name: Optional[str] = None
     location: Location
@@ -98,19 +103,20 @@ class IntelligenceEngine:
         
         EXTRACT:
         1. Title and a brief description.
-        2. Author Name: The person who WROTE or POSTED the content.
-           - For interviews (e.g., "In Conversation with X"), the author is the INTERVIEWER, not the person being interviewed.
-           - On social media (Reddit, Twitter/X), this is the User who created the post.
-        3. Author Username/Handle (e.g. @name, u/name).
-        4. Company/Organization Name (The company/subject the article is ABOUT).
-        5. Publisher Name (The organization that originally published the content, e.g. Times of India, BW Legal World).
-        6. Platform (The site you are currently on, e.g. Reddit, Twitter, Medium, News Site).
+        2. Author Name: The primary person of interest who wrote the content, posted it, or is the main subject being interviewed/profiled (e.g., in Q&As, interviews, or conversations, prioritize the interviewee/subject of the article over the reporter/journalist/editorial team).
+        3. Author Username/Handle.
+        4. Company/Organization Name associated with the primary person of interest (e.g. the company they work for or represent).
+        5. Publisher Name (e.g. the website or news outlet).
+        6. Platform.
         
-        CRITICAL: Select the most likely Author Profile URL from the following list or find it in the text.
-        If it's a social platform, prioritize the user profile link:
+        STRICT RULES:
+        - Return ONLY a JSON object matching the schema below.
+        - DO NOT wrap the response in a parent key like "data" or "author".
+        - Use "Unknown" if data is missing.
+        
         {links_context}
         
-        Return ONLY valid JSON matching this structure:
+        JSON STRUCTURE:
         {{
             "title": "string",
             "description": "string",
@@ -132,37 +138,68 @@ class IntelligenceEngine:
         """
         Phase 4: Merge base data with enriched profile data and resolve location.
         """
+        # Truncate enrichment data to avoid Groq 413 Payload Too Large
+        safe_enrichment = (enriched_text or "No additional social data found.")[:8000]
+        
         prompt = f"""
-        Analyze the following article data and social media profile snippets to create a FINAL enrichment report for the author.
+        Analyze the following article data and social media profile snippets to create a FINAL enrichment report for the author/person of interest.
+        
+        INITIAL EXTRACTION:
+        Author Name: {base.author_name}
+        Author Username: {base.author_username}
+        Company Name: {base.company_name}
+        Publisher: {base.publisher}
+        Platform: {base.platform}
+        Original Profile URL: {base.profile_url}
         
         ARTICLE INFO:
         Title: {base.title}
-        Initial Description: {base.description}
-        Publisher/Platform: {base.platform}
+        Description: {base.description}
         
         SOCIAL ENRICHMENT DATA:
-        {enriched_text if enriched_text else "No additional social data found."}
-        
-        TASK:
-        1. Refine the author's full name, current company, and location.
-        2. Extract EXACT follower counts for each platform (LinkedIn, X, Instagram, etc.).
-        3. **INFER AUTHOR DEMOGRAPHICS**:
-           - Industry: What is their primary professional field? (e.g. "Legal Journalism")
-           - Seniority: Are they an Executive, Manager, Lead, or Individual?
-           - Interests: List 3-5 core professional interests from their bio.
-           - Experience: Estimate years of experience (e.g. "10+ years").
-           - Gender: Infer based on name or bio pronouns.
-        4. **ESTIMATE AGE**: If the exact age is not mentioned, ESTIMATE it based on career milestones (e.g. graduation year).
-        5. Consolidate all social profile URLs found with their bio and followers.
+        {safe_enrichment}
         
         STRICT RULES:
-        - Return ONLY a JSON object matching the 'FinalIntelligence' schema.
-        - If multiple follower counts are found, use the HIGHEST count for the main 'followers' field.
-        - Do NOT hallucinate metrics. Use 0 or "Unknown" if not found.
-        - Ensure 'social_profiles' is a list of objects.
+        1. Return ONLY a JSON object matching the 'FinalIntelligence' schema.
+        2. DO NOT wrap the response in a parent key.
+        3. Include the original 'title' and 'description' from the ARTICLE INFO above.
+        4. Populate 'author_name' using the INITIAL EXTRACTION value unless the SOCIAL ENRICHMENT DATA provides a more accurate or complete name.
+        5. Populate 'company_name' using the INITIAL EXTRACTION value or resolve it from the author's current organization mentioned in the social snippets.
+        6. For 'followers', extract/estimate the highest follower count found for the author across their profiles. It MUST be a single integer. If the snippet says '500+', use 500. If it says '1.5K', use 1500. Do NOT output '5' for '500+'.
+        7. For 'following', extract/estimate the highest following/connections count found for the author across their profiles. It MUST be a single integer. If it says '500+', use 500.
+        8. For 'age', estimate the author's/subject's age in years as an integer based on:
+           - Explicit mentions of their age in their bios or snippets.
+           - Their education/career timeline (e.g. if they started university in 2000, they were likely ~18 then, meaning they were born around 1982. Current year is 2026, so they would be approximately 44 years old. If they started their first job in 2010, they were likely ~22 then, meaning they were born around 1988, making them ~38 in 2026).
+           - Do your best to estimate an approximate age if there are any professional timeline details in the snippets or article. If there is absolutely no timeline or age information, default to 0.
+        9. Populate 'location' as an object containing {{"city": "...", "state": "...", "country": "..."}}. Use snippets or article info to find their location, or "Unknown" if not found.
+        10. Populate 'author_demographics' with:
+           - 'gender': "Male", "Female", "Non-binary", or "Unknown".
+           - 'industry': The primary industry they work in (e.g., "Legal", "Technology", "Finance", etc.).
+           - 'seniority': Their professional seniority level (e.g., "C-Level", "VP", "Director", "Senior", "Junior", "Unknown").
+           - 'interests': A list of key professional/personal interests extracted from their bio or description.
+           - 'estimated_experience': Estimate their years of professional experience (e.g., "10+ years", "15 years", "Unknown") based on their career history.
+        11. Populate 'social_profiles' by extracting a list of profile objects found in the snippets. ONLY extract profiles that belong EXACTLY to the main Author/Company described in the INITIAL EXTRACTION. Do NOT extract profiles of employees, staff, or other related individuals. Each profile object must match the SocialProfile schema:
+            {{"url": "string", "platform": "string", "username": "string or null", "followers": int, "following": int, "bio": "string or null", "age": int, "gender": "string or Unknown", "location": "string or Unknown"}}
+            Ensure that 'followers' and 'following' are accurate integers (e.g. 500 for '500+', NOT 5).
         """
         
-        return await self._call_llm(prompt, FinalIntelligence)
+        result = await self._call_llm(prompt, FinalIntelligence)
+        
+        # Post-process: Ensure title, description, and key metadata are populated/restored from base if AI skipped them
+        if not result.title or result.title == "Unknown":
+            result.title = base.title
+        if not result.description or result.description == "Unknown":
+            result.description = base.description
+        if (not result.author_name or result.author_name == "Unknown") and base.author_name and base.author_name != "Unknown":
+            result.author_name = base.author_name
+        if (not result.company_name or result.company_name == "Unknown") and base.company_name and base.company_name != "Unknown":
+            result.company_name = base.company_name
+        if (not result.author_username or result.author_username == "Unknown") and base.author_username and base.author_username != "Unknown":
+            result.author_username = base.author_username
+        if (not result.platform or result.platform == "Unknown") and base.platform and base.platform != "Unknown":
+            result.platform = base.platform
+            
+        return result
 
     def _clean_json(self, text: str) -> str:
         """Strips markdown and cleans JSON text for parsing."""
@@ -185,8 +222,9 @@ class IntelligenceEngine:
         # Clean fallback list (removed decommissioned models)
         models = [
             "llama-3.3-70b-versatile",
-            "llama-3.1-70b-versatile",
-            "llama3-70b-8192",
+            "meta-llama/llama-4-scout-17b-16e-instruct",
+            "groq/compound",
+            "qwen/qwen3-32b",
             "llama-3.1-8b-instant"
         ]
 
@@ -206,15 +244,57 @@ class IntelligenceEngine:
                 try:
                     result = schema.model_validate_json(clean_content)
                 except Exception as ve:
-                    # JSON Repair: Sometimes 8b models wrap the result in an "author" or "data" key
                     logger.warning(f"Validation failed for {model_name}, attempting repair...")
-                    data = json.loads(clean_content)
-                    if "data" in data: data = data["data"]
-                    if "author" in data and schema.__name__ == "FinalIntelligence":
-                        # Flatten nested author data if found
-                        author_data = data.pop("author")
-                        data.update(author_data)
-                    result = schema.model_validate(data)
+                    try:
+                        data = json.loads(clean_content)
+                        
+                        # 1. Flatten common wrapper keys
+                        for wrapper in ["data", "author", "result", "extraction", "report"]:
+                            if wrapper in data and isinstance(data[wrapper], dict):
+                                data = data[wrapper]
+                                break
+
+                        # 2. Map non-standard keys
+                        mapping = {
+                            "name": "author_name",
+                            "author": "author_name",
+                            "handle": "author_username",
+                            "username": "author_username",
+                            "company": "company_name",
+                        }
+                        for old_key, new_key in mapping.items():
+                            if old_key in data and new_key not in data:
+                                data[new_key] = data[old_key]
+
+                        # 3. Fix 'location' if it's a string
+                        if "location" in data and isinstance(data["location"], str):
+                            data["location"] = {"city": data["location"]}
+                        
+                        # 4. Fix 'followers' if it's a dict or string
+                        if "followers" in data:
+                            if isinstance(data["followers"], dict):
+                                vals = [v for v in data["followers"].values() if isinstance(v, (int, float))]
+                                data["followers"] = int(max(vals)) if vals else 0
+                            elif isinstance(data["followers"], str):
+                                try:
+                                    data["followers"] = int(data["followers"].replace(",", "").replace("+", "").split()[0])
+                                except:
+                                    data["followers"] = 0
+                        
+                        # 5. Ensure social_profiles is a list of objects
+                        if "social_profiles" in data and isinstance(data["social_profiles"], list):
+                            new_profiles = []
+                            for p in data["social_profiles"]:
+                                if isinstance(p, str):
+                                    new_profiles.append({"url": p, "platform": "Unknown"})
+                                elif isinstance(p, dict) and "url" in p:
+                                    new_profiles.append(p)
+                            data["social_profiles"] = new_profiles
+
+                        result = schema.model_validate(data)
+                    except Exception as final_ve:
+                        logger.error(f"Repair failed for {model_name}: {final_ve}")
+                        continue
 
                 # Auto-resolve location if it's FinalIntelligence
                 if isinstance(result, FinalIntelligence):
@@ -241,7 +321,7 @@ class IntelligenceEngine:
                 }
             )
             data = json.loads(response.text)
-            result = model_class(**data)
+            result = schema(**data)
             
             if isinstance(result, FinalIntelligence):
                 result.location = self.resolve_location(result.location)

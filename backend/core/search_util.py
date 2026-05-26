@@ -74,9 +74,9 @@ class SearchManager:
         finally:
             new_loop.close()
 
-    def _get_browser_kwargs(self):
+    def _get_browser_kwargs(self, use_proxy: bool = True):
         kwargs = {"headless": self.headless}
-        if PROXY_URL:
+        if use_proxy and PROXY_URL:
             # Apify proxy format: http://user:pass@host:port
             if "@" in PROXY_URL:
                 try:
@@ -95,10 +95,19 @@ class SearchManager:
                 kwargs["proxy"] = {"server": PROXY_URL}
         return kwargs
     
-    def _decode_bing_redirect(self, url: str) -> str:
+    def _decode_redirect(self, url: str) -> str:
         """
-        Decodes a Bing redirect URL (ck/a) to get the final destination.
+        Decodes a search engine redirect URL to get the final destination.
         """
+        if "duckduckgo.com/l/" in url and "uddg=" in url:
+            try:
+                parsed = urllib.parse.urlparse(url)
+                uddg = urllib.parse.parse_qs(parsed.query).get('uddg', [None])[0]
+                if uddg:
+                    return urllib.parse.unquote(uddg)
+            except Exception:
+                pass
+
         if "ck/a" not in url or "&u=" not in url:
             return url
             
@@ -115,7 +124,7 @@ class SearchManager:
                 if "http" in decoded:
                     return decoded
         except Exception as e:
-            logger.debug(f"Bing redirect decode failed: {e}")
+            logger.debug(f"Redirect decode failed: {e}")
         return url
 
     async def _find_author_profile_url_internal(self, author_name: str, company: str, publisher: str) -> dict:
@@ -125,7 +134,20 @@ class SearchManager:
         """
         query = f'"{author_name}" {company} {publisher} LinkedIn'
         logger.info(f"Searching for author profile on Bing: {query}")
-        return await self._playwright_search(query, ["linkedin.com/in/", "staff", "authors", "profile/"])
+        try:
+            return await self._playwright_search(query, ["linkedin.com/in/", "staff", "authors", "profile/"], use_proxy=True)
+        except Exception as e:
+            err_msg = str(e).lower()
+            if any(x in err_msg for x in ["proxy", "connection", "reset", "timeout", "abort"]):
+                logger.warning(f"Author profile search failed with proxy: {e}. Retrying WITHOUT proxy...")
+                try:
+                    return await self._playwright_search(query, ["linkedin.com/in/", "staff", "authors", "profile/"], use_proxy=False)
+                except Exception as fallback_e:
+                    logger.error(f"Fallback author profile search failed: {fallback_e}")
+                    return None
+            else:
+                logger.error(f"Author profile search failed: {e}")
+                return None
 
     async def _find_social_profiles_internal(self, author_name: str, company: str) -> list:
         """
@@ -134,6 +156,23 @@ class SearchManager:
         if not author_name or author_name.lower() == "unknown":
             return []
 
+        try:
+            return await self._run_social_profiles_search(author_name, company, use_proxy=True)
+        except Exception as e:
+            err_msg = str(e).lower()
+            if any(x in err_msg for x in ["proxy", "connection", "reset", "timeout", "abort"]):
+                logger.warning(f"Social profile search failed with proxy: {e}. Retrying WITHOUT proxy...")
+                try:
+                    return await self._run_social_profiles_search(author_name, company, use_proxy=False)
+                except Exception as fallback_e:
+                    logger.error(f"Fallback social profile search failed: {fallback_e}")
+                    return []
+            else:
+                logger.error(f"Social profile search failed: {e}")
+                return []
+
+    async def _run_social_profiles_search(self, author_name: str, company: str, use_proxy: bool) -> list:
+        """Runs the actual social profiles search with or without proxy."""
         async with async_playwright() as p:
             import random
             
@@ -144,7 +183,7 @@ class SearchManager:
                 {"width": 1536, "height": 864}
             ]
             
-            browser_kwargs = self._get_browser_kwargs()
+            browser_kwargs = self._get_browser_kwargs(use_proxy=use_proxy)
             # Add slowMo to mimic human interaction speed
             browser_kwargs["slow_mo"] = random.randint(50, 150)
             
@@ -158,13 +197,13 @@ class SearchManager:
                 timezone_id="America/New_York"
             )
             
-            # Prepare search tasks for different platforms following [author] [company] [platform] profile
+            # Prepare search tasks for different platforms following [author] [company] [platform] profile followers location
             search_tasks = [
-                self._search_on_page(context, f'{author_name} {company} LinkedIn profile', "linkedin.com/in/"),
-                self._search_on_page(context, f'{author_name} {company} Instagram profile', "instagram.com/"),
-                self._search_on_page(context, f'{author_name} {company} Twitter X profile', "twitter.com/"),
-                self._search_on_page(context, f'{author_name} {company} Facebook profile', "facebook.com/"),
-                self._search_on_page(context, f'{author_name} {company} YouTube profile', "youtube.com/@")
+                self._search_on_page(context, f'{author_name} {company} LinkedIn profile followers location', "linkedin.com/in/", author_name=author_name),
+                self._search_on_page(context, f'{author_name} {company} Instagram profile followers', "instagram.com/", author_name=author_name),
+                self._search_on_page(context, f'{author_name} {company} Twitter X profile followers following', "twitter.com/", author_name=author_name),
+                self._search_on_page(context, f'{author_name} {company} Facebook profile', "facebook.com/", author_name=author_name),
+                self._search_on_page(context, f'{author_name} {company} YouTube profile subscribers', "youtube.com/@", author_name=author_name)
             ]
             
             # Run in parallel
@@ -182,45 +221,57 @@ class SearchManager:
             
             return all_profiles
 
-    async def _search_on_page(self, context, query: str, keyword: str, use_google: bool = False) -> list:
+    async def _search_on_page(self, context, query: str, keyword: str, author_name: str = "", use_google: bool = False) -> list:
         async with self.semaphore:
             page = await context.new_page()
             
-            # Optimize: Block heavy resources to speed up slow proxy
-            await page.route("**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf}", lambda route: route.abort())
+            # Optimize: Block heavy resources (images/media only) to speed up slow proxy without breaking layout
+            await page.route("**/*.{png,jpg,jpeg,gif,svg,mp3,mp4,avi,webm}", lambda route: route.abort())
             
             await Stealth().apply_stealth_async(page)
             found = []
             try:
                 # Try specific search first
-                search_url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}"
-                logger.info(f"Searching Bing (Specific): {search_url}")
+                search_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+                logger.info(f"Searching DuckDuckGo (Specific): {search_url}")
                 await page.goto(search_url, wait_until="load", timeout=90000)
-                await asyncio.sleep(5)
+                # Scroll a bit to trigger any lazy loading or bot-checks
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight/2)")
+                await asyncio.sleep(2)
                 
                 results = await self._extract_results_from_page(page)
                 
                 # Check for matches in initial results
                 for item in results:
-                    self._check_match(item, keyword, query, found)
+                    self._check_match(item, keyword, query, found, author_name=author_name)
                 
                 # If NO MATCHES found, try a broader search (Name + Platform only)
                 if not found:
-                    # TRULY BROAD: Just Author Name + Platform
-                    # Query parts: "[author name] [orgs] [platform] profile"
-                    parts = query.split()
-                    # Author name is usually the first 2 parts (First Last)
-                    name = f"{parts[0]} {parts[1]}" if len(parts) > 1 else parts[0]
-                    platform_hint = parts[-2] if len(parts) > 2 else ""
-                    broad_query = f"{name} {platform_hint} profile"
+                    # TRULY BROAD: Just Author Name + Platform + demographic keywords
+                    if author_name:
+                        name = author_name
+                    else:
+                        parts = query.split()
+                        # Author name is usually the first 2 parts (First Last)
+                        name = f"{parts[0]} {parts[1]}" if len(parts) > 1 else parts[0]
                     
-                    search_url = f"https://www.bing.com/search?q={urllib.parse.quote(broad_query)}"
+                    # Extract platform from query robustly
+                    platform_hint = ""
+                    for p in ["LinkedIn", "Instagram", "Twitter", "Facebook", "YouTube", "X"]:
+                        if p.lower() in query.lower():
+                            platform_hint = p
+                            break
+                            
+                    broad_query = f"{name} {platform_hint} profile followers"
+                    
+                    search_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(broad_query)}"
                     logger.info(f"No match in specific results. Trying Broad Search: {search_url}")
                     await page.goto(search_url, wait_until="load", timeout=60000)
-                    await asyncio.sleep(5)
+                    await page.evaluate("window.scrollTo(0, document.body.scrollHeight/2)")
+                    await asyncio.sleep(2)
                     results = await self._extract_results_from_page(page)
                     for item in results:
-                        self._check_match(item, keyword, broad_query, found)
+                        self._check_match(item, keyword, broad_query, found, author_name=author_name)
                 
                 logger.info(f"Total matches found: {len(found)}")
             except Exception as e:
@@ -229,7 +280,7 @@ class SearchManager:
                 await page.close()
             return found
 
-    def _check_match(self, item: dict, keyword: str, query: str, found_list: list) -> bool:
+    def _check_match(self, item: dict, keyword: str, query: str, found_list: list, author_name: str = "") -> bool:
         """Helper to check if a result item matches the target keyword/author with high precision."""
         href = item['href'].lower()
         text = item['text'].lower()
@@ -254,9 +305,12 @@ class SearchManager:
         
         # PRECISE NAME MATCHING:
         # We want to see at least two parts of the author's name in the result
-        # Filter out common search terms
-        query_clean = query.lower().replace("profile", "").replace("linkedin", "").replace("twitter", "").replace("instagram", "").replace("facebook", "").replace("youtube", "").replace(" x ", "")
-        name_parts = [p for p in query_clean.split() if len(p) > 2]
+        if author_name:
+            name_parts = [p for p in author_name.lower().split() if len(p) > 2]
+        else:
+            # Filter out common search terms
+            query_clean = query.lower().replace("profile", "").replace("linkedin", "").replace("twitter", "").replace("instagram", "").replace("facebook", "").replace("youtube", "").replace(" x ", "")
+            name_parts = [p for p in query_clean.split() if len(p) > 2]
         
         # Count how many parts of the name are found in the result title/snippet/URL
         matches_count = 0
@@ -280,7 +334,7 @@ class SearchManager:
             is_match = False
         
         if is_match:
-            final_url = self._decode_bing_redirect(item['href'])
+            final_url = self._decode_redirect(item['href'])
             if not any(f["url"] == final_url for f in found_list):
                 logger.info(f"MATCH FOUND: {final_url} (Score: {matches_count}/{len(name_parts)})")
                 found_list.append({
@@ -295,7 +349,25 @@ class SearchManager:
         return await page.evaluate("""
             () => {
                 const results = [];
-                // Target Bing's main result containers
+                
+                // DuckDuckGo HTML version
+                const ddgItems = document.querySelectorAll('.result');
+                if (ddgItems.length > 0) {
+                    ddgItems.forEach(item => {
+                        const link = item.querySelector('.result__a');
+                        const snippet = item.querySelector('.result__snippet');
+                        if (link && link.href) {
+                            results.push({
+                                href: link.href,
+                                text: link.innerText,
+                                snippet: snippet ? snippet.innerText : ""
+                            });
+                        }
+                    });
+                    return results;
+                }
+
+                // Target Bing's main result containers (fallback)
                 const items = document.querySelectorAll('li.b_algo');
                 
                 items.forEach(item => {
@@ -323,10 +395,10 @@ class SearchManager:
             }
         """)
 
-    async def _playwright_search(self, query: str, keywords: list) -> str:
+    async def _playwright_search(self, query: str, keywords: list, use_proxy: bool = True) -> str:
         """Helper updated to use Bing for reliable single profile discovery."""
         async with async_playwright() as p:
-            browser_kwargs = self._get_browser_kwargs()
+            browser_kwargs = self._get_browser_kwargs(use_proxy=use_proxy)
             browser = await p.chromium.launch(**browser_kwargs)
             
             # Use a realistic context
@@ -336,36 +408,20 @@ class SearchManager:
             )
             page = await context.new_page()
             
-            # Block heavy resources
-            await page.route("**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf}", lambda route: route.abort())
+            # Block heavy resources (images/media only)
+            await page.route("**/*.{png,jpg,jpeg,gif,svg,mp3,mp4,avi,webm}", lambda route: route.abort())
             await Stealth().apply_stealth_async(page)
             
             try:
-                search_url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}"
-                logger.info(f"Direct Search Bing: {search_url}")
+                search_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+                logger.info(f"Direct Search DuckDuckGo: {search_url}")
                 await page.goto(search_url, wait_until="load", timeout=60000)
                 
                 # Allow results to render
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)
                 
                 # Use Smart Extraction logic for direct search too
-                results = await page.evaluate("""
-                    () => {
-                        const results = [];
-                        const items = document.querySelectorAll('li.b_algo');
-                        items.forEach(item => {
-                            const link = item.querySelector('h2 a');
-                            if (link && link.href) {
-                                results.push({
-                                    href: link.href,
-                                    text: link.innerText,
-                                    snippet: item.innerText
-                                });
-                            }
-                        });
-                        return results;
-                    }
-                """)
+                results = await self._extract_results_from_page(page)
                 
                 for item in results:
                     href = item['href']
@@ -373,7 +429,7 @@ class SearchManager:
                     snippet = item['snippet'].lower()
                     
                     # Resolve redirect first to check against keywords
-                    final_url = self._decode_bing_redirect(href)
+                    final_url = self._decode_redirect(href)
                     
                     is_match = False
                     if any(k in final_url.lower() for k in keywords):

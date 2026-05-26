@@ -37,7 +37,12 @@ async def run_social_intelligence_pipeline(url: str) -> dict:
         # SEARCH FALLBACK: If no profile URL found on page, search the web
         searcher = SearchManager(headless=False)
         profile_data = None
-        if (not profile_url or profile_url.lower() == "null") and base_data.author_name:
+        
+        # Clean profile_url from AI (remove "Unknown", "null", etc.)
+        if profile_url and profile_url.lower() in ["unknown", "null", "none", ""]:
+            profile_url = None
+
+        if not profile_url and base_data.author_name:
             logger.info("No profile URL found on page. Triggering Browser Search Fallback...")
             profile_data = await searcher.find_author_profile_url(
                 base_data.author_name, 
@@ -57,9 +62,9 @@ async def run_social_intelligence_pipeline(url: str) -> dict:
             search_context = f"{base_data.publisher or ''} {base_data.company_name or ''}".strip()
             social_profiles = await searcher.find_social_profiles(base_data.author_name, search_context)
             if social_profiles:
-                logger.info(f"Found {len(social_profiles)} social profiles. Trimming to top 8 for AI stability.")
-                # Sort by snippet length or relevance if possible, here we just take top 8
-                social_profiles = social_profiles[:8]
+                logger.info(f"Found {len(social_profiles)} social profiles. Trimming to top 5 for AI stability.")
+                # Sort by snippet length or relevance if possible, here we just take top 5
+                social_profiles = social_profiles[:5]
                 social_links = [s["url"] for s in social_profiles]
                 # Aggregate all snippets for AI enrichment with CLEAR URL LABELS
                 for profile in social_profiles:
