@@ -11,7 +11,7 @@ SERVER_PORT = int(os.getenv("PROXY_SERVER_PORT", "8500"))
 
 # --- Proxy Scraping Settings ---
 # How often (in seconds) to refresh the proxy list
-REFRESH_INTERVAL_SECONDS = int(os.getenv("PROXY_REFRESH_INTERVAL", "600"))  # 10 minutes
+REFRESH_INTERVAL_SECONDS = int(os.getenv("PROXY_REFRESH_INTERVAL", "120"))  # 2 minutes
 
 # Target country code for filtering
 TARGET_COUNTRY = "IN"  # India
