@@ -59,4 +59,9 @@ PROXY_SOURCES = {
         "https://www.proxy-list.download/api/v1/get"
         "?type=http&anon=anonymous&country=IN"
     ),
+
+    # Roosterkid / OpenProxyList (GitHub)
+    "roosterkid_https": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS.txt",
+    "roosterkid_socks4": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS4.txt",
+    "roosterkid_socks5": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS5.txt",
 }

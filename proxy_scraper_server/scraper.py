@@ -144,6 +144,29 @@ def fetch_free_proxy_list_net() -> List[Dict]:
     return proxies
 
 
+def fetch_roosterkid(url: str, protocol: str) -> List[Dict]:
+    """Fetch proxies from Roosterkid GitHub list."""
+    proxies = []
+    try:
+        resp = requests.get(url, timeout=15)
+        resp.raise_for_status()
+        for line in resp.text.splitlines():
+            if 'IN' in line or '🇮🇳' in line:
+                match = re.search(r"(\d{1,3}(?:\.\d{1,3}){3}:\d+)", line)
+                if match:
+                    ip, port = match.group(1).split(":")
+                    proxies.append({
+                        "ip": ip,
+                        "port": int(port),
+                        "protocol": protocol,
+                        "country": "IN",
+                        "source": "roosterkid",
+                    })
+        logger.info(f"[Roosterkid/{protocol}] Fetched {len(proxies)} proxies")
+    except Exception as e:
+        logger.warning(f"[Roosterkid/{protocol}] Failed to fetch: {e}")
+    return proxies
+
 
 def scrape_all_sources() -> List[Dict]:
     """
@@ -178,6 +201,11 @@ def scrape_all_sources() -> List[Dict]:
 
     # -- FreeProxyList.net (BeautifulSoup) --
     all_proxies.extend(fetch_free_proxy_list_net())
+
+    # -- Roosterkid (GitHub) --
+    all_proxies.extend(fetch_roosterkid(PROXY_SOURCES["roosterkid_https"], "http"))
+    all_proxies.extend(fetch_roosterkid(PROXY_SOURCES["roosterkid_socks4"], "socks4"))
+    all_proxies.extend(fetch_roosterkid(PROXY_SOURCES["roosterkid_socks5"], "socks5"))
 
     # Deduplicate by ip:port
     seen = set()
