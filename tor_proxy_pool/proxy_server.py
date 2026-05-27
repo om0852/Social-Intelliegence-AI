@@ -133,6 +133,13 @@ class ProxyServer:
                 parsed = urlparse(url_path)
                 dest_host = parsed.hostname or parsed.netloc
                 dest_port = parsed.port or (80 if parsed.scheme == 'http' else 443)
+
+                # Handle health checks (e.g. Render sending GET /)
+                if not dest_host:
+                    client_writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHealthy\r\n")
+                    await client_writer.drain()
+                    client_writer.close()
+                    return
                 
                 # Reconstruct relative request path if necessary
                 path = parsed.path
@@ -178,9 +185,9 @@ class ProxyServer:
     async def start(self):
         """Starts the proxy server listening for connections."""
         self.server = await asyncio.start_server(
-            self.handle_client, "127.0.0.1", PROXY_PORT
+            self.handle_client, "0.0.0.0", PROXY_PORT
         )
-        logger.info(f"Asynchronous HTTP Tunneling Proxy is live and listening on 127.0.0.1:{PROXY_PORT}")
+        logger.info(f"Asynchronous HTTP Tunneling Proxy is live and listening on 0.0.0.0:{PROXY_PORT}")
 
     async def stop(self):
         """Stops the proxy server."""
