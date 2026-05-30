@@ -239,6 +239,7 @@ class FetchRequest(BaseModel):
     headers: Optional[Dict[str, str]] = None    # Custom headers to send
     body: Optional[Dict] = None                 # JSON body (for POST/PUT)
     timeout: int = 30                           # Request timeout in seconds
+    max_retries: int = 3                        # How many times to retry on failure
 
 
 @app.post("/fetch")
@@ -260,26 +261,29 @@ async def fetch_via_proxy(req: FetchRequest):
         return {"error": "No active proxies available. Pool may still be loading."}
 
     import requests as req_lib
+    import asyncio
 
-    # Pick a random Indian proxy
-    proxy = random.choice(active_proxies)
-    protocol = proxy.get("protocol", "http")
-    ip = proxy["ip"]
-    port = proxy["port"]
+    # Pick up to max_retries random proxies
+    num_proxies = min(req.max_retries, len(active_proxies))
+    chosen_proxies = random.sample(active_proxies, num_proxies)
 
-    if protocol in ("socks5", "socks4"):
-        proxy_url = f"socks5://{ip}:{port}"
-    else:
-        proxy_url = f"http://{ip}:{port}"
+    def do_request(proxy_info):
+        protocol = proxy_info.get("protocol", "http")
+        ip = proxy_info["ip"]
+        port = proxy_info["port"]
 
-    proxy_dict = {
-        "http": proxy_url,
-        "https": proxy_url,
-    }
+        if protocol in ("socks5", "socks4"):
+            proxy_url = f"socks5://{ip}:{port}"
+        else:
+            proxy_url = f"http://{ip}:{port}"
 
-    logger.info(f"🌐 Forwarding {req.method} {req.url} via proxy {proxy_url}")
+        proxy_dict = {
+            "http": proxy_url,
+            "https": proxy_url,
+        }
 
-    try:
+        logger.info(f"🌐 [Parallel Fetch] Forwarding {req.method} {req.url} via proxy {proxy_url}")
+
         response = req_lib.request(
             method=req.method.upper(),
             url=req.url,
@@ -289,35 +293,44 @@ async def fetch_via_proxy(req: FetchRequest):
             timeout=req.timeout,
             verify=False,
         )
+        return response, proxy_url, ip, proxy_info.get("country", "IN")
 
-        # Try to parse response as JSON, fallback to text
+    loop = asyncio.get_running_loop()
+    tasks = [loop.run_in_executor(None, do_request, p) for p in chosen_proxies]
+    
+    errors = []
+
+    # Wait for the first successful completion
+    for f in asyncio.as_completed(tasks):
         try:
-            response_body = response.json()
-        except Exception:
-            response_body = response.text
+            response, proxy_url, ip, country = await f
 
-        return {
-            "success": True,
-            "proxy_used": proxy_url,
-            "proxy_ip": ip,
-            "proxy_country": proxy.get("country", "IN"),
-            "status_code": response.status_code,
-            "response_headers": dict(response.headers),
-            "response": response_body,
-        }
+            # Try to parse response as JSON, fallback to text
+            try:
+                response_body = response.json()
+            except Exception:
+                response_body = response.text
 
-    except req_lib.exceptions.Timeout:
-        return {
-            "success": False,
-            "proxy_used": proxy_url,
-            "error": f"Request timed out after {req.timeout}s through proxy {proxy_url}",
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "proxy_used": proxy_url,
-            "error": str(e),
-        }
+            return {
+                "success": True,
+                "proxy_used": proxy_url,
+                "proxy_ip": ip,
+                "proxy_country": country,
+                "status_code": response.status_code,
+                "response_headers": dict(response.headers),
+                "response": response_body,
+            }
+        except req_lib.exceptions.Timeout:
+            errors.append("Timeout")
+        except Exception as e:
+            errors.append(str(e))
+
+    # If all parallel tasks failed
+    return {
+        "success": False,
+        "error": f"All {num_proxies} parallel proxy attempts failed.",
+        "details": errors
+    }
 
 
 

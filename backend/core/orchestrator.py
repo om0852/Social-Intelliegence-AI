@@ -100,7 +100,25 @@ async def run_social_intelligence_pipeline(url: str) -> dict:
         domain_mgr = DomainManager()
         domain_metrics = domain_mgr.get_domain_metrics(url)
         if domain_metrics:
-            final_report.domain_metrics = domain_metrics
+            from core.intelligence import DomainMetrics
+            try:
+                final_report.domain_metrics = DomainMetrics(**domain_metrics)
+            except Exception as e:
+                logger.warning(f"Failed to cast domain metrics to Pydantic model: {e}")
+                final_report.domain_metrics = domain_metrics
+
+        # Phase 6: Cloudflare Radar Metrics (DNS Top Locations + HTTP Summary)
+        from core.radar_util import RadarManager
+        logger.info(f"--- Phase 6: Fetching Cloudflare Radar Metrics for {url} ---")
+        radar_mgr = RadarManager()
+        radar_metrics = radar_mgr.get_radar_metrics(url)
+        if radar_metrics:
+            from core.intelligence import RadarIntelligence
+            try:
+                final_report.radar_metrics = RadarIntelligence(**radar_metrics)
+            except Exception as e:
+                logger.warning(f"Failed to cast Cloudflare Radar metrics to Pydantic model: {e}")
+                final_report.radar_metrics = radar_metrics
 
         return {
             "success": True,

@@ -8,7 +8,7 @@ import requests
 from typing import List, Dict
 
 from bs4 import BeautifulSoup
-from config import PROXY_SOURCES, TARGET_COUNTRY
+from config import PROXY_SOURCES, ALLOWED_COUNTRIES
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ def fetch_proxyscrape(url: str, protocol: str) -> List[Dict]:
                 "ip": ip,
                 "port": int(port),
                 "protocol": protocol,
-                "country": TARGET_COUNTRY,
+                "country": "UNKNOWN", # ProxyScrape text API doesn't provide country
                 "source": "proxyscrape",
             })
         logger.info(f"[ProxyScrape/{protocol}] Fetched {len(proxies)} proxies")
@@ -53,13 +53,16 @@ def fetch_geonode(url: str) -> List[Dict]:
         data = resp.json()
         items = data.get("data", [])
         for item in items:
+            country = item.get("country", "")
+            if country not in ALLOWED_COUNTRIES:
+                continue
             protocols = item.get("protocols", [])
             proto = protocols[0] if protocols else "http"
             proxies.append({
                 "ip": item.get("ip"),
                 "port": int(item.get("port", 0)),
                 "protocol": proto,
-                "country": item.get("country", ""),
+                "country": country,
                 "source": "geonode",
             })
         logger.info(f"[Geonode] Fetched {len(proxies)} proxies")
@@ -82,12 +85,17 @@ def fetch_spys_me(url: str, protocol: str) -> List[Dict]:
             addr_match = re.match(r"(\d{1,3}(?:\.\d{1,3}){3}):(\d{2,5})", parts[0])
             if not addr_match:
                 continue
-            # Accept all countries to hit 600+ proxies
+            
+            # spys.me usually has the country in parts[1], e.g. "US-N-S"
+            country_code = parts[1].split('-')[0] if len(parts) > 1 else "UNKNOWN"
+            if country_code not in ALLOWED_COUNTRIES:
+                continue
+
             proxies.append({
                 "ip": addr_match.group(1),
                 "port": int(addr_match.group(2)),
                 "protocol": protocol,
-                "country": "ALL",
+                "country": country_code,
                 "source": "spys_me",
             })
         logger.info(f"[SpysMe/{protocol}] Fetched {len(proxies)} proxies")
@@ -109,7 +117,7 @@ def fetch_free_proxy_list(url: str) -> List[Dict]:
                 "ip": ip,
                 "port": int(port),
                 "protocol": "http",
-                "country": TARGET_COUNTRY,
+                "country": "UNKNOWN",
                 "source": "free_proxy_list",
             })
         logger.info(f"[FreeProxyList] Fetched {len(proxies)} proxies")
@@ -122,7 +130,7 @@ def fetch_free_proxy_list_net() -> List[Dict]:
     """Fetch proxies from free-proxy-list.net using BeautifulSoup."""
     proxies = []
     try:
-        resp = requests.get("https://free-proxy-list.net/", timeout=15)
+        resp = requests.get("https://free-proxy-list.net/en/", timeout=15)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.content, 'html.parser')
         td_elements = soup.select('.fpl-list .table tbody tr td')
@@ -131,6 +139,11 @@ def fetch_free_proxy_list_net() -> List[Dict]:
             ip = td_elements[j].text.strip()
             port = td_elements[j + 1].text.strip()
             country = td_elements[j + 2].text.strip()
+            
+            # They use 2-letter country code
+            if country not in ALLOWED_COUNTRIES:
+                continue
+
             proxies.append({
                 "ip": ip,
                 "port": int(port),
@@ -151,7 +164,15 @@ def fetch_roosterkid(url: str, protocol: str) -> List[Dict]:
         resp = requests.get(url, timeout=15)
         resp.raise_for_status()
         for line in resp.text.splitlines():
-            if 'IN' in line or '🇮🇳' in line:
+            # Roosterkid usually has plain IPs, but we check if any allowed country code is in the line
+            # If line doesn't contain a country code, we skip it
+            found_country = None
+            for c in ALLOWED_COUNTRIES:
+                if c in line:
+                    found_country = c
+                    break
+            
+            if found_country:
                 match = re.search(r"(\d{1,3}(?:\.\d{1,3}){3}:\d+)", line)
                 if match:
                     ip, port = match.group(1).split(":")
@@ -159,7 +180,7 @@ def fetch_roosterkid(url: str, protocol: str) -> List[Dict]:
                         "ip": ip,
                         "port": int(port),
                         "protocol": protocol,
-                        "country": "IN",
+                        "country": found_country,
                         "source": "roosterkid",
                     })
         logger.info(f"[Roosterkid/{protocol}] Fetched {len(proxies)} proxies")
@@ -171,7 +192,7 @@ def fetch_roosterkid(url: str, protocol: str) -> List[Dict]:
 def scrape_all_sources() -> List[Dict]:
     """
     Master function: scrape all configured sources and return a
-    deduplicated list of Indian proxy candidates.
+    deduplicated list of proxy candidates from famous countries.
     """
     all_proxies: List[Dict] = []
 
@@ -216,5 +237,5 @@ def scrape_all_sources() -> List[Dict]:
             seen.add(key)
             unique.append(proxy)
 
-    logger.info(f"Total unique Indian proxy candidates: {len(unique)}")
+    logger.info(f"Total unique global proxy candidates: {len(unique)}")
     return unique

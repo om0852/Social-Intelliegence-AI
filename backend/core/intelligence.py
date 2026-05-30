@@ -17,6 +17,9 @@ class SocialProfile(BaseModel):
     username: Optional[str] = None
     followers: Optional[int] = 0
     following: Optional[int] = 0
+    connections: Optional[int] = 0
+    position: Optional[str] = "Unknown"
+    experience: Optional[str] = "Unknown"
     bio: Optional[str] = None
     age: Optional[int] = 0
     gender: Optional[str] = "Unknown"
@@ -37,6 +40,9 @@ class InitialExtraction(BaseModel):
     platform: Optional[str] = None
     profile_url: Optional[str] = None
     social_profiles: List[str] = []
+    topic: Optional[str] = None
+    category: Optional[str] = None
+    sentiment: Optional[str] = None
 
 class CountryShare(BaseModel):
     country: str
@@ -69,6 +75,32 @@ class AuthorDemographics(BaseModel):
     seniority: Optional[str] = "Unknown"
     interests: List[str] = []
     estimated_experience: Optional[str] = "Unknown"
+    position: Optional[str] = "Unknown"
+
+class RadarLocation(BaseModel):
+    country_code: str
+    country_name: str
+    traffic_share: float
+
+class RadarTechnicalDemographics(BaseModel):
+    device_desktop: float
+    device_mobile: float
+    device_tablet: float
+    os_windows: float
+    os_android: float
+    os_ios: float
+    os_mac: float
+    os_linux: float
+    browser_chrome: float
+    browser_safari: float
+    browser_firefox: float
+    browser_edge: float
+    human_traffic_share: float
+    bot_traffic_share: float
+
+class RadarIntelligence(BaseModel):
+    top_locations: List[RadarLocation] = []
+    audience_demographics: Optional[RadarTechnicalDemographics] = None
 
 class FinalIntelligence(BaseModel):
     title: Optional[str] = None
@@ -84,6 +116,10 @@ class FinalIntelligence(BaseModel):
     location: Location
     social_profiles: List[SocialProfile] = []
     domain_metrics: Optional[DomainMetrics] = None
+    topic: Optional[str] = None
+    category: Optional[str] = None
+    sentiment: Optional[str] = None
+    radar_metrics: Optional[RadarIntelligence] = None
 
 class IntelligenceEngine:
     def __init__(self):
@@ -108,6 +144,9 @@ class IntelligenceEngine:
         4. Company/Organization Name associated with the primary person of interest (e.g. the company they work for or represent).
         5. Publisher Name (e.g. the website or news outlet).
         6. Platform.
+        7. Topic: The main topic or theme discussed in the content.
+        8. Category: The category of the topic (e.g. Technology, Legal, Finance, Healthcare, Lifestyle, etc.).
+        9. Sentiment: The overall sentiment of the content (Positive, Neutral, Negative).
         
         STRICT RULES:
         - Return ONLY a JSON object matching the schema below.
@@ -125,7 +164,10 @@ class IntelligenceEngine:
             "company_name": "string or null",
             "publisher": "string or null",
             "platform": "string or null",
-            "profile_url": "string or null"
+            "profile_url": "string or null",
+            "topic": "string or null",
+            "category": "string or null",
+            "sentiment": "string or null"
         }}
 
         CONTENT:
@@ -151,6 +193,9 @@ class IntelligenceEngine:
         Publisher: {base.publisher}
         Platform: {base.platform}
         Original Profile URL: {base.profile_url}
+        Topic: {base.topic}
+        Category: {base.category}
+        Sentiment: {base.sentiment}
         
         ARTICLE INFO:
         Title: {base.title}
@@ -165,22 +210,37 @@ class IntelligenceEngine:
         3. Include the original 'title' and 'description' from the ARTICLE INFO above.
         4. Populate 'author_name' using the INITIAL EXTRACTION value unless the SOCIAL ENRICHMENT DATA provides a more accurate or complete name.
         5. Populate 'company_name' using the INITIAL EXTRACTION value or resolve it from the author's current organization mentioned in the social snippets.
-        6. For 'followers', extract/estimate the highest follower count found for the author across their profiles. It MUST be a single integer. If the snippet says '500+', use 500. If it says '1.5K', use 1500. Do NOT output '5' for '500+'.
-        7. For 'following', extract/estimate the highest following/connections count found for the author across their profiles. It MUST be a single integer. If it says '500+', use 500.
-        8. For 'age', estimate the author's/subject's age in years as an integer based on:
+        6. Preserve or refine 'topic', 'category', and 'sentiment' from the INITIAL EXTRACTION.
+        7. For 'followers', extract/estimate the highest follower count found for the author across their profiles. It MUST be a single integer. If the snippet says '500+', use 500. If it says '1.5K', use 1500. Do NOT output '5' for '500+'.
+        8. For 'following', extract/estimate the highest following count found for the author across their profiles. It MUST be a single integer.
+        9. For 'age', estimate the author's/subject's age in years as an integer based on:
            - Explicit mentions of their age in their bios or snippets.
            - Their education/career timeline (e.g. if they started university in 2000, they were likely ~18 then, meaning they were born around 1982. Current year is 2026, so they would be approximately 44 years old. If they started their first job in 2010, they were likely ~22 then, meaning they were born around 1988, making them ~38 in 2026).
            - Do your best to estimate an approximate age if there are any professional timeline details in the snippets or article. If there is absolutely no timeline or age information, default to 0.
-        9. Populate 'location' as an object containing {{"city": "...", "state": "...", "country": "..."}}. Use snippets or article info to find their location, or "Unknown" if not found.
-        10. Populate 'author_demographics' with:
+        10. Populate 'location' as an object containing {{"city": "...", "state": "...", "country": "..."}}. Use snippets or article info to find their location, or "Unknown" if not found.
+        11. Populate 'author_demographics' with:
            - 'gender': "Male", "Female", "Non-binary", or "Unknown".
            - 'industry': The primary industry they work in (e.g., "Legal", "Technology", "Finance", etc.).
            - 'seniority': Their professional seniority level (e.g., "C-Level", "VP", "Director", "Senior", "Junior", "Unknown").
            - 'interests': A list of key professional/personal interests extracted from their bio or description.
            - 'estimated_experience': Estimate their years of professional experience (e.g., "10+ years", "15 years", "Unknown") based on their career history.
-        11. Populate 'social_profiles' by extracting a list of profile objects found in the snippets. ONLY extract profiles that belong EXACTLY to the main Author/Company described in the INITIAL EXTRACTION. Do NOT extract profiles of employees, staff, or other related individuals. Each profile object must match the SocialProfile schema:
-            {{"url": "string", "platform": "string", "username": "string or null", "followers": int, "following": int, "bio": "string or null", "age": int, "gender": "string or Unknown", "location": "string or Unknown"}}
-            Ensure that 'followers' and 'following' are accurate integers (e.g. 500 for '500+', NOT 5).
+           - 'position': The job title or role of the author (e.g. "Chief Legal Officer", "Software Engineer", "Marketing Director").
+        12. Populate 'social_profiles' by extracting a list of profile objects found in the snippets. ONLY extract profiles that belong EXACTLY to the main Author/Company described in the INITIAL EXTRACTION. Do NOT extract profiles of employees, staff, or other related individuals. Each profile object must match the SocialProfile schema:
+            {{
+                "url": "string", 
+                "platform": "string", 
+                "username": "string or null", 
+                "followers": int, 
+                "following": int, 
+                "connections": int, 
+                "position": "string or Unknown", 
+                "experience": "string or Unknown", 
+                "bio": "string or null", 
+                "age": int, 
+                "gender": "string or Unknown", 
+                "location": "string or Unknown"
+            }}
+            Ensure that 'followers', 'following', and 'connections' are accurate integers (e.g. 500 for '500+', NOT 5).
         """
         
         result = await self._call_llm(prompt, FinalIntelligence)
@@ -198,6 +258,12 @@ class IntelligenceEngine:
             result.author_username = base.author_username
         if (not result.platform or result.platform == "Unknown") and base.platform and base.platform != "Unknown":
             result.platform = base.platform
+        if not result.topic or result.topic == "Unknown":
+            result.topic = base.topic
+        if not result.category or result.category == "Unknown":
+            result.category = base.category
+        if not result.sentiment or result.sentiment == "Unknown":
+            result.sentiment = base.sentiment
             
         return result
 

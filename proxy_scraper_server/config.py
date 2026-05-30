@@ -13,8 +13,12 @@ SERVER_PORT = int(os.getenv("PROXY_SERVER_PORT", "8500"))
 # How often (in seconds) to refresh the proxy list
 REFRESH_INTERVAL_SECONDS = int(os.getenv("PROXY_REFRESH_INTERVAL", "120"))  # 2 minutes
 
-# Target country code for filtering
-TARGET_COUNTRY = "IN"  # India
+# Allowed target countries (famous/tier-1/2 with social media access)
+ALLOWED_COUNTRIES = {
+    "US", "GB", "CA", "AU", "DE", "FR", "NL", "SG", "JP", "IN",
+    "IT", "ES", "KR", "CH", "SE", "NO", "DK", "FI", "IE", "NZ",
+    "BR", "MX", "ZA", "PL", "PT", "CZ", "AT", "BE"
+}
 
 # Maximum time (in seconds) to wait when testing a single proxy
 PROXY_TEST_TIMEOUT = int(os.getenv("PROXY_TEST_TIMEOUT", "8"))
@@ -35,19 +39,18 @@ PROXY_SOURCES = {
     "proxyscrape_http": (
         "https://api.proxyscrape.com/v2/"
         "?request=displayproxies&protocol=http&timeout=10000"
-        "&country=IN&ssl=all&anonymity=all"
+        "&ssl=all&anonymity=all"
     ),
     "proxyscrape_socks5": (
         "https://api.proxyscrape.com/v2/"
         "?request=displayproxies&protocol=socks5&timeout=10000"
-        "&country=IN&ssl=all&anonymity=all"
+        "&ssl=all&anonymity=all"
     ),
 
     # Geonode — structured JSON API with country filter
     "geonode": (
         "https://proxylist.geonode.com/api/proxy-list"
-        "?limit=200&page=1&sort_by=lastChecked&sort_type=desc"
-        "&country=IN&filterUpTime=80&protocols=http%2Chttps%2Csocks5"
+        "?anonymityLevel=transparent&page=1&limit=500&sort_by=lastChecked&sort_type=desc"
     ),
 
     # spys.me — plain text list (all countries, we filter client-side)
@@ -57,7 +60,7 @@ PROXY_SOURCES = {
     # Free-Proxy-List (plain text)
     "free_proxy_list": (
         "https://www.proxy-list.download/api/v1/get"
-        "?type=http&anon=anonymous&country=IN"
+        "?type=http&anon=anonymous"
     ),
 
     # Roosterkid / OpenProxyList (GitHub)

@@ -86,7 +86,18 @@ class Scraper:
                 
                 # Get the page content
                 html = await page.content()
-                text = await page.evaluate("() => document.body.innerText")
+                
+                # Extract clean article text using trafilatura to strip nav/footers/boilerplate
+                import trafilatura
+                clean_text = trafilatura.extract(html, include_links=True, include_formatting=True)
+                
+                if clean_text and len(clean_text) > 200:
+                    text = clean_text
+                    logger.info(f"Trafilatura extracted {len(text)} chars of clean article text.")
+                else:
+                    logger.info("Trafilatura returned little/no text, falling back to innerText.")
+                    text = await page.evaluate("() => document.body.innerText")
+                    
                 title = await page.title()
                 
                 # Extract potential author/profile links
