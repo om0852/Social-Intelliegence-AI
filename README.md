@@ -1,156 +1,107 @@
----
-title: TorProxyPool
-emoji: 🐳
-colorFrom: indigo
-colorTo: pink
-sdk: docker
-app_port: 7860
-pinned: false
----
+# Social-Intelliegence-AI
 
-# Portable Rotating Tor Proxy Pool Server
+End-to-end social intelligence and proxy tooling for scraping, automation, and analytics workflows.
 
-A high-performance asynchronous HTTP CONNECT tunneling proxy that round-robins incoming traffic over a pool of active Tor instances with automated IP circuit rotation.
+## What this project does
 
-## Table of Contents
+This repo combines three related systems under one working directory:
+- A browser/social scraping and analytics backend
+- A proxy scraping service
+- A Tor proxy pool server
 
-- [What is this?](#what-is-this)
-- [Why use it?](#why-use-it)
-- [How it works](#how-it-works)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Prerequisites](#prerequisites)
-- [Setup](#setup)
-  - [Docker](#docker)
-  - [Local](#local)
-- [Usage](#usage)
-- [Configuration](#configuration)
-- [Troubleshooting](#troubleshooting)
-- [Security Considerations](#security-considerations)
+It is designed for research and automation use cases involving profile, reel, post, search, and bulk extraction workflows.
 
-## What is this?
+## Tech stack
 
-This project is a **portable rotating Tor proxy pool server**. In simple terms:
+- Python
+- Node.js
+- Playwright
+- Tor
+- Docker
+- FastAPI/Flask-style Python services
+- JSON and CSV data files for local datasets
 
-- It creates a **pool of Tor connections** (think of each Tor connection as a different, anonymous internet identity with its own IP address).
-- It accepts **HTTP CONNECT requests** from your application, tool, or script.
-- It then **automatically rotates** the outbound request through a different Tor exit node so the destination sees a different IP address on each new connection.
-
-This is useful for web scraping, testing, privacy research, and any workflow that needs many unique IPs without manually managing Tor circuits.
-
-## Why use it?
-
-- **No manual IP rotation**: manage a pool of Tor instances, not a single browser or proxy.
-- **High performance**: built with asyncio for concurrent connections.
-- **Portable**: Dockerized and config-driven, so it runs the same way locally, on a VPS, or on platforms like Hugging Face Spaces.
-- **Minimal dependencies**: Python + Tor + a few packages.
-
-## How it works
-
-1. Start `N` Tor daemon processes.
-2. Each Tor daemon listens on a local SOCKS port (e.g., `9050`, `9051`, ...).
-3. The proxy server accepts inbound `CONNECT host:port` requests.
-4. It assigns each new request to the next Tor daemon in round-robin order.
-5. The request is tunneled through that Tor daemon to the destination.
-6. Future requests continue rotating, giving you a rotating pool of exit IPs.
-
-## Tech Stack
-
-| Component | Purpose |
-|---|---|
-| Python 3.10 | Runtime |
-| Tor | Anonymous network / IP rotation |
-| asyncio | Concurrent request handling |
-| Docker | Containerized deployment |
-| Hugging Face Spaces | One-click hosted deployment |
-
-## Project Structure
+## Repo structure
 
 ```
-├── backend/                 # Backend logic / API or service code
-├── tor_proxy_pool/         # Core proxy pool server implementation
-│   ├── main.py
-│   └── requirements.txt
-├── proxy_scraper_server/   # Related proxy scraping/validation service
-├── tor_proxy_pool/         # Tor pool implementation
-├── Dockerfile              # Container build instructions
-├── test_raw.py             # Raw connectivity test
-├── test_search.py          # Search/HTML parsing tests
-├── test_search2.py         # Additional search tests
-└── README.md               # You are here
+backend/
+  app.py
+  bulk_extract.py
+  parse_urls.py
+  analytics.html
+  test_final.py
+  test_profile.py
+  test_reel.py
+  core/
+    config.py
+    domain_util.py
+    intelligence.py
+    orchestrator.py
+    profiles.py
+    radar_util.py
+    reels.py
+    scraper.py
+    search_util.py
+  social-intel-backend/
+    package.json
+    server.js
+    test.js
+    test_reel.js
+    core/
+      ai.js
+      orchestrator.js
+      reels.js
+      scraper.js
+      search.js
+  node_scraper/
+    index.js
+    package.json
+proxy_scraper_server/
+  app.py
+  config.py
+  requirements.txt
+  scraper.py
+  scrape_spys_one.py
+  tester.py
+  test_client.py
+  test_live_proxies.py
+  test_ssl_playwright.py
+tor_proxy_pool/
+  main.py
+  proxy_server.py
+  config.py
+  tor_manager.py
+  requirements.txt
+  test_proxy.py
 ```
 
-## Prerequisites
+## Requirements
 
-- Docker and Docker Compose
-- OR Python 3.10+ with `pip`
-- Tor (system package) if running locally without Docker
+- Python 3.10+
+- Node.js and npm
+- Tor
+- Playwright browsers if using browser automation
+- Docker optional
 
 ## Setup
 
-### Docker
+- Use each service folder’s requirements or package manifest as the source of truth.
+- `proxy_scraper_server/requirements.txt`
+- `tor_proxy_pool/requirements.txt`
+- `backend/social-intel-backend/package.json`
+- `backend/node_scraper/package.json`
 
-```bash
-docker build -t tor-proxy-pool .
-docker run -p 7860:7860 tor-proxy-pool
-```
+Run Python services with Python, Node services with Node.
 
-### Local (Python)
+## Running
 
-```bash
-python -m venv .venv
-source .venv/bin/activate  # Linux/macOS
-.venv\Scripts\activate     # Windows
-pip install -r requirements.txt
-python tor_proxy_pool/main.py
-```
+Start the relevant service folders depending on workflow. Proxy services expose local HTTP ports; inspect their main entry files for host/port values.
 
-### Hugging Face Spaces
+## Notes
 
-Use the standard Hugging Face Spaces Docker workflow. The `Dockerfile` is already configured for Spaces with:
-- user UID 1000
-- port 7860
-- `tor_proxy_pool/main.py` as entrypoint
+- Some folders include local JSON/CSV scratch artifacts from testing.
+- Use only for authorized use, respecting platform terms and data rules.
 
-## Usage
+## License
 
-Once running, configure your application to use the proxy on `http://localhost:7860` as an HTTP CONNECT proxy depending on how your client is set up.
-
-### Quick test
-
-Send an HTTP CONNECT request through the proxy:
-
-```bash
-curl -x http://localhost:7860 https://check.torproject.org
-```
-
-Repeated requests should alternate exit IPs as the request rotates through the pool.
-
-## Configuration
-
-Current configuration is mostly defined in code. Key areas to inspect:
-
-- `tor_proxy_pool/main.py` — startup and rotation logic
-- `Dockerfile` — port, user, dependencies
-- Requirement files in subpackages — per-service dependency lists
-
-Recommended additions for production:
-- Env var configuration for pool size, ports, timeouts
-- Health checks for each Tor daemon before routing traffic
-- Logging rotation and request tracing
-
-## Troubleshooting
-
-| Issue | Cause | Fix |
-|---|---|---|
-| Connection timeout | Tor daemon slow to bootstrap | Wait 30-60s after startup |
-| Port 9050 already in use | Local Tor running | Stop local Tor or change ports |
-| Empty HTML body when scraping | Anti-bot blocking | Combine with a browser/profile rotation strategy |
-| High memory usage | Each Tor daemon is a separate process | Reduce pool size or use swap |
-
-## Security Considerations
-
-- This project is intended for **authorized use only**: research, testing, and public web access.
-- Do not use this service to access systems, networks, or content without explicit permission.
-- Tor exit node traffic is subject to exit node policies and legal jurisdictions.
-- Running a misconfigured open proxy can expose your server to abuse. Bind appropriately and add authentication if exposed externally.
+MIT
